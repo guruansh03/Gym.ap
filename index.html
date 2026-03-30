@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0a0a0a">
+<meta name="description" content="Iron Log — Minimal offline gym tracker PWA. Track sets, reps, volume, PRs and progressive overload.">
 <link rel="manifest" href="manifest.json">
-<title>IRON LOG</title>
+<title>IRON LOG – Gym Workout Tracker</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
 :root {
@@ -404,7 +405,7 @@ hr{border:none;border-top:1px solid var(--border2);margin:10px 0}
   <div class="ob-title">Iron Log</div>
   <div class="ob-sub">Set up your training split to get started</div>
   <div class="ob-section">
-    <div class="ob-label">Your training days (drag to reorder)</div>
+    <div class="ob-label">Select your training days</div>
     <div class="split-chips" id="split-chips">
       <div class="split-chip selected" data-val="push">PUSH</div>
       <div class="split-chip selected" data-val="pull">PULL</div>
@@ -537,8 +538,8 @@ hr{border:none;border-top:1px solid var(--border2);margin:10px 0}
       <div style="flex:1">
         <div class="label" style="margin-bottom:6px">Bodyweight (optional)</div>
         <div style="display:flex;align-items:center;gap:6px">
-          <input type="number" id="summary-bw" class="input-field" step="0.5" placeholder="${settings?.bodyweight||'74.5'}" style="flex:1;padding:9px 11px;font-size:14px">
-          <span style="font-size:12px;color:var(--text2);font-family:var(--font-display)">${settings?.unit||'kg'}</span>
+          <input type="number" id="summary-bw" class="input-field" step="0.5" placeholder="74.5" style="flex:1;padding:9px 11px;font-size:14px">
+          <span id="summary-bw-unit" style="font-size:12px;color:var(--text2);font-family:var(--font-display)">kg</span>
         </div>
       </div>
     </div>
@@ -661,6 +662,7 @@ let workoutStartTime = null;
 let workoutTimerInterval = null;
 let pendingEnergy = 3;
 let selectedExercise = null;
+let selectedRange = '3M';
 let workoutHistory = [];
 let searchDebounceTimer = null;
 let saveDebounceTimer = null;
@@ -732,6 +734,19 @@ function uid(prefix){return prefix+'_'+Date.now()+'_'+Math.random().toString(36)
 function epley(w,r){if(r<=1)return w;return Math.round(w*(1+r/30)*10)/10}
 function pct(a,b){if(!b)return null;const d=((a-b)/b*100);return (d>=0?'+':'')+d.toFixed(1)+'%'}
 function volStr(v){ const u=settings?.unit||'kg'; return v>=1000?(v/1000).toFixed(1)+'t':v+u }
+
+function getRangeFilterDate(range){
+  if(range==='ALL') return null;
+  const d = new Date();
+  switch(range){
+    case '1M': d.setMonth(d.getMonth()-1); break;
+    case '3M': d.setMonth(d.getMonth()-3); break;
+    case '6M': d.setMonth(d.getMonth()-6); break;
+    case '1Y': d.setFullYear(d.getFullYear()-1); break;
+    default: return null;
+  }
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
 
 function getSplitMuscles(split){
   const map = {
@@ -873,7 +888,8 @@ async function getWeekStats(){
     const todayHasSession = sessions.find(s=>s.date===todayStr_&&s.status==='completed');
     let check = new Date(today);
     if(!todayHasSession) check.setDate(check.getDate()-1);
-    while(true){
+    let safetyLimit = 365;
+    while(safetyLimit-- > 0){
       const cs = `${check.getFullYear()}-${String(check.getMonth()+1).padStart(2,'0')}-${String(check.getDate()).padStart(2,'0')}`;
       if(check.getDay()===0&&!settings?.includeSunday){check.setDate(check.getDate()-1);continue;}
       if(allSorted.includes(cs)){streak++;check.setDate(check.getDate()-1);}
@@ -997,7 +1013,6 @@ async function renderToday(){
     });
   }
   document.getElementById('today-content').innerHTML=content;
-  console.log('Today content rendered, length:', content.length); // Debug log
 }
 
 async function startWorkout(splitType){
@@ -1093,7 +1108,7 @@ async function renderWorkoutExercises(){
           <div>${buildPicker('r',ei,si,set.reps||8,buildRepsVals())}</div>
           <button class="picker-adjust-btn" onclick="adjustVal(${ei},${si},'r',1)">+</button>
           <div class="set-vol">${vol?volStr(vol):''}</div>
-          <button class="btn-sm" style="width:32px;height:32px;border-radius:6px;border:1px solid ${set.done?'transparent':'var(--border)'};cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;${set.done?'background:var(--accent2);color:#080808':'background:var(--bg4);color:var(--text3)'}" onclick="toggleSetDone(${ei},${si})">✓</button>
+          <button class="btn-sm" id="setcheck-${ei}-${si}" style="width:32px;height:32px;border-radius:6px;border:1px solid ${set.done?'transparent':'var(--border)'};cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;${set.done?'background:var(--accent2);color:#080808':'background:var(--bg4);color:var(--text3)'}" onclick="toggleSetDone(${ei},${si})">✓</button>
           <button class="set-del" onclick="deleteSet(${ei},${si})">✕</button>
         </div>`;
       } else if(entry.trackingType==='reps_only'){
@@ -1102,7 +1117,7 @@ async function renderWorkoutExercises(){
           <div class="set-num">${si+1}</div>
           <div>${buildPicker('r',ei,si,set.reps||10,buildRepsVals())}</div>
           <div></div>
-          <button class="btn-sm" style="width:32px;height:32px;border-radius:6px;border:1px solid ${set.done?'transparent':'var(--border)'};cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;${set.done?'background:var(--accent2);color:#080808':'background:var(--bg4);color:var(--text3)'}" onclick="toggleSetDone(${ei},${si})">✓</button>
+          <button class="btn-sm" id="setcheck-${ei}-${si}" style="width:32px;height:32px;border-radius:6px;border:1px solid ${set.done?'transparent':'var(--border)'};cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;${set.done?'background:var(--accent2);color:#080808':'background:var(--bg4);color:var(--text3)'}" onclick="toggleSetDone(${ei},${si})">✓</button>
         </div>`;
       } else {
         setsHTML+=`
@@ -1110,7 +1125,7 @@ async function renderWorkoutExercises(){
           <div class="set-num">${si+1}</div>
           <div>${buildPicker('t',ei,si,set.time||60,[30,45,60,90,120,150,180,240,300,360,420,480,600])}</div>
           <div></div>
-          <button class="btn-sm" style="width:32px;height:32px;border-radius:6px;border:1px solid ${set.done?'transparent':'var(--border)'};cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;${set.done?'background:var(--accent2);color:#080808':'background:var(--bg4);color:var(--text3)'}" onclick="toggleSetDone(${ei},${si})">✓</button>
+          <button class="btn-sm" id="setcheck-${ei}-${si}" style="width:32px;height:32px;border-radius:6px;border:1px solid ${set.done?'transparent':'var(--border)'};cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;${set.done?'background:var(--accent2);color:#080808':'background:var(--bg4);color:var(--text3)'}" onclick="toggleSetDone(${ei},${si})">✓</button>
         </div>`;
       }
     });
@@ -1189,11 +1204,15 @@ function buildPicker(type,ei,si,val,vals,unit){
 function initPicker(id, vals, initVal, onChange){
   const list = document.getElementById(id);
   if(!list) return;
-  let idx = vals.findIndex(v=>v==initVal);
+  // Use parseFloat comparison to handle string/number mismatches from localStorage restore
+  let idx = vals.findIndex(v=>parseFloat(v)===parseFloat(initVal));
   if(idx<0) idx=0;
+  let isInitializing = true;
   requestAnimationFrame(()=>{
     list.scrollTop = idx*38;
     updatePickerSelected(list,idx);
+    // Mark initialization complete after scroll settles
+    setTimeout(()=>{ isInitializing=false; }, 200);
   });
   let scrollTimeout;
   list.addEventListener('scroll',()=>{
@@ -1205,7 +1224,11 @@ function initPicker(id, vals, initVal, onChange){
         list.scrollTo({top:clampedIdx*38,behavior:'smooth'});
       }
       updatePickerSelected(list,clampedIdx);
-      onChange(vals[clampedIdx]);
+      // Only fire onChange for real user interactions, not initialization snapping
+      if(!isInitializing){
+        onChange(vals[clampedIdx]);
+        debouncedSaveWorkout();
+      }
     },80);
   });
 }
@@ -1225,7 +1248,7 @@ function updateSetVol(ei,si){
 
 function toggleSetDone(ei,si){
   currentWorkout.entries[ei].sets[si].done = !currentWorkout.entries[ei].sets[si].done;
-  const btn = document.querySelector(`#setrow-${ei}-${si} button`);
+  const btn = document.getElementById(`setcheck-${ei}-${si}`);
   if(btn){
     const done = currentWorkout.entries[ei].sets[si].done;
     btn.style.background = done?'var(--accent2)':'var(--bg4)';
@@ -1291,7 +1314,7 @@ function adjustVal(ei,si,type,delta){
     set.weight = newW;
     const list = document.getElementById(`picker-w-${ei}-${si}`);
     if(list){
-      const idx = wVals.findIndex(v=>v==newW);
+      const idx = wVals.findIndex(v=>parseFloat(v)===parseFloat(newW));
       if(idx>=0){ list.scrollTo({top:idx*38,behavior:'smooth'}); updatePickerSelected(list,idx); }
     }
   } else {
@@ -1394,7 +1417,7 @@ async function completeWorkout(){
     const doneSets = entry.sets.filter(s=>s.done);
     if(!doneSets.length) return null;
     let entryVol=0, topW=0, topR=0;
-    const processedSets = entry.sets.map((s,i)=>{
+    const processedSets = doneSets.map((s,i)=>{
       const vol=(s.weight||0)*(s.reps||0);
       entryVol+=vol;
       totalVolume+=vol;
@@ -1434,6 +1457,11 @@ async function completeWorkout(){
   currentWorkout.note='';
   
   document.getElementById('workout-screen').style.display='none';
+  // Populate summary screen dynamic values
+  const bwInput = document.getElementById('summary-bw');
+  if(bwInput) bwInput.placeholder = settings?.bodyweight || '74.5';
+  const bwUnit = document.getElementById('summary-bw-unit');
+  if(bwUnit) bwUnit.textContent = settings?.unit || 'kg';
   renderSummary();
   document.getElementById('summary-screen').style.display='flex';
 }
@@ -1602,7 +1630,7 @@ async function renderProgress(){
       ${activeSorted.map(e=>`<option value="${e.id}" ${e.id===selectedExercise?'selected':''}>${e.name}</option>`).join('')}
     </select>
     <div class="range-pills" id="range-pills">
-      ${['1M','3M','6M','1Y','ALL'].map(r=>`<div class="range-pill ${r==='3M'?'active':''}" onclick="selectRange('${r}',this)">${r}</div>`).join('')}
+      ${['1M','3M','6M','1Y','ALL'].map(r=>`<div class="range-pill ${r===selectedRange?'active':''}" onclick="selectRange('${r}',this)">${r}</div>`).join('')}
     </div>
   `;
   const exData = [];
@@ -1610,8 +1638,11 @@ async function renderProgress(){
     const entry = s.entries.find(e=>e.exerciseId===selectedExercise);
     if(entry) exData.push({date:s.date,totalVolume:entry.totalVolume,e1rm:entry.estimatedOneRepMax,topW:entry.topSetWeight,topR:entry.topSetReps});
   });
-  exData.sort((a,b)=>a.date>b.date?1:-1);
-  if(!exData.length){
+  exData.sort((a,b)=>a.date.localeCompare(b.date));
+  // Apply range filter
+  const rangeFilterDate = getRangeFilterDate(selectedRange);
+  const filteredExData = rangeFilterDate ? exData.filter(d=>d.date>=rangeFilterDate) : exData;
+  if(!filteredExData.length){
     html+=`<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-msg">NO DATA YET</div></div>`;
     document.getElementById('progress-content').innerHTML=html;
     return;
@@ -1626,11 +1657,11 @@ async function renderProgress(){
       <canvas id="e1rm-graph" width="320" height="150" style="width:100%;height:150px"></canvas>
     </div>
   `;
-  const maxE1rm = Math.max(...exData.map(d=>d.e1rm||0));
-  const maxE1rmDate = exData.find(d=>d.e1rm===maxE1rm)?.date;
-  const totalSessions = exData.length;
-  const latestE1rm = exData[exData.length-1]?.e1rm||0;
-  const volTrend = exData.length>=2?pct(exData[exData.length-1].totalVolume,exData[0].totalVolume):null;
+  const maxE1rm = Math.max(...filteredExData.map(d=>d.e1rm||0));
+  const maxE1rmDate = filteredExData.find(d=>d.e1rm===maxE1rm)?.date;
+  const totalSessions = filteredExData.length;
+  const latestE1rm = filteredExData[filteredExData.length-1]?.e1rm||0;
+  const volTrend = filteredExData.length>=2?pct(filteredExData[filteredExData.length-1].totalVolume,filteredExData[0].totalVolume):null;
   html+=`
     <div class="stats-grid">
       <div class="stat-box"><div class="stat-label">Current e1RM</div><div class="stat-val">${latestE1rm}<span class="stat-unit">${unit}</span></div></div>
@@ -1735,8 +1766,8 @@ async function renderProgress(){
   
   document.getElementById('progress-content').innerHTML=html;
   requestAnimationFrame(()=>{
-    drawGraph('vol-graph', exData.map(d=>d.totalVolume), exData.map(d=>d.date), 'var(--accent)', unit);
-    drawGraph('e1rm-graph', exData.map(d=>d.e1rm||0), exData.map(d=>d.date), '#7a9ecc', unit);
+    drawGraph('vol-graph', filteredExData.map(d=>d.totalVolume), filteredExData.map(d=>d.date), 'var(--accent)', unit);
+    drawGraph('e1rm-graph', filteredExData.map(d=>d.e1rm||0), filteredExData.map(d=>d.date), '#7a9ecc', unit);
     if(bwHistory.length>=2){
       drawGraph('bw-graph', bwHistory.map(b=>b.bw), bwHistory.map(b=>b.date), 'var(--accent2)', unit);
     }
@@ -1867,6 +1898,7 @@ function drawGraph(canvasId, values, labels, color, unit){
 
 function selectProgressEx(id){ selectedExercise=id; renderProgress(); }
 function selectRange(r,el){
+  selectedRange=r;
   document.querySelectorAll('.range-pill').forEach(p=>p.classList.remove('active'));
   el.classList.add('active');
   renderProgress();
@@ -1956,7 +1988,8 @@ async function editSplit(){
 async function exportData(){
   const sessions = await dbGetAll('sessions');
   const exercises = await dbGetAll('exercises');
-  const blob = new Blob([JSON.stringify({settings,sessions,exercises},null,2)],{type:'application/json'});
+  const skipped = await dbGetAll('skipped');
+  const blob = new Blob([JSON.stringify({settings,sessions,exercises,skipped},null,2)],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
   a.download=`ironlog-backup-${todayStr()}.json`;
@@ -2073,6 +2106,11 @@ async function importJSONData(data){
   if(data.exercises && Array.isArray(data.exercises)){
     for(const e of data.exercises){
       if(e.id && e.name) { await dbPut('exercises',e); exercisesImported++; }
+    }
+  }
+  if(data.skipped && Array.isArray(data.skipped)){
+    for(const s of data.skipped){
+      if(s.id) await dbPut('skipped',s);
     }
   }
   if(data.settings && !settings){ settings=data.settings; await dbPut('settings',settings,'main'); }
@@ -2306,17 +2344,14 @@ async function generateSampleData(){
 }
 
 async function init(){
-  console.log('Init starting...'); // Debug log
   try {
     await initDB();
-    console.log('DB initialized'); // Debug log
   } catch(e) {
-    console.error('DB init failed:', e); // Debug log
+    console.error('DB init failed:', e);
     document.getElementById('onboarding').classList.add('active');
     return;
   }
   const existing = await dbGetAll('exercises');
-  console.log('Existing exercises:', existing.length); // Debug log
   if(!existing.length){
     for(const ex of DEFAULT_EXERCISES) await dbPut('exercises',ex);
   } else {
@@ -2325,17 +2360,13 @@ async function init(){
     }
   }
   settings = await dbGet('settings','main');
-  console.log('Settings loaded:', settings); // Debug log
   if(!settings || !settings.split || settings.split.length === 0){
-    console.log('Showing onboarding'); // Debug log
     document.getElementById('onboarding').classList.add('active');
     document.getElementById('onboarding').style.display = 'flex'; // Force display
   } else {
-    console.log('Settings exist, rendering app'); // Debug log
     document.documentElement.setAttribute('data-theme', settings.theme||'dark');
     // Try to restore active workout first
     if(!restoreWorkoutFromStorage()){
-      console.log('No workout to restore, rendering today'); // Debug log
       renderToday();
     }
   }
