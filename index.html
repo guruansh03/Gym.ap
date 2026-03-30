@@ -786,13 +786,24 @@ function getBackupReminder(){
   return `<div style="font-size:11px;color:var(--text3);margin-bottom:8px;font-family:var(--font-display)">Last backup: ${daysSince}d ago</div>`;
 }
 
-// Workout Persistence - survives app switch/screen off
+// Workout Persistence - survives app switch, screen off, and app kill
 function saveWorkoutToStorage(){
   if(currentWorkout){
-    localStorage.setItem('ironlog_active_workout',JSON.stringify({workout:currentWorkout,startTime:workoutStartTime}));
+    localStorage.setItem('ironlog_active_workout',JSON.stringify({
+      workout:currentWorkout,
+      startTime:workoutStartTime,
+      savedAt:Date.now(),
+      phase: currentWorkout.status === 'partial' ? 'summary' : 'active'
+    }));
   }else{
     localStorage.removeItem('ironlog_active_workout');
   }
+}
+
+function flushAndSaveWorkout(){
+  // Cancel any pending debounced save and save immediately
+  clearTimeout(saveDebounceTimer);
+  saveWorkoutToStorage();
 }
 
 function debouncedSaveWorkout(){
@@ -805,15 +816,53 @@ function restoreWorkoutFromStorage(){
   if(!saved)return false;
   try{
     const data=JSON.parse(saved);
-    if(data.workout&&data.workout.status!=='completed'){
-      currentWorkout=data.workout;
-      workoutStartTime=data.startTime||Date.now();
-      document.getElementById('workout-title').textContent=currentWorkout.splitType.toUpperCase()+' DAY';
-      document.getElementById('workout-screen').style.display='flex';
-      startTimer();
-      renderWorkoutExercises();
+    if(!data.workout) { localStorage.removeItem('ironlog_active_workout'); return false; }
+    
+    const workout = data.workout;
+    
+    // If workout was already completed + saved, don't restore
+    if(workout.status==='completed'){
+      localStorage.removeItem('ironlog_active_workout');
+      return false;
+    }
+    
+    // Cross-midnight detection: workout started on a different day
+    const today = todayStr();
+    const workoutDate = workout.date;
+    if(workoutDate && workoutDate !== today){
+      const daysDiff = Math.ceil((new Date(today+'T00:00:00') - new Date(workoutDate+'T00:00:00'))/(864e5));
+      if(!confirm(`You have an unfinished ${workout.splitType.toUpperCase()} workout from ${daysDiff===1?'yesterday':daysDiff+' days ago'}. Resume it?`)){
+        localStorage.removeItem('ironlog_active_workout');
+        return false;
+      }
+      // Update the date to today if user resumes
+      workout.date = today;
+    }
+
+    currentWorkout = workout;
+    workoutStartTime = data.startTime||Date.now();
+    
+    // If was on summary screen when killed, go back to summary
+    if(data.phase === 'summary'){
+      document.getElementById('workout-screen').style.display='none';
+      // Populate summary screen dynamic values
+      const bwInput = document.getElementById('summary-bw');
+      if(bwInput) bwInput.placeholder = settings?.bodyweight || '74.5';
+      const bwUnit = document.getElementById('summary-bw-unit');
+      if(bwUnit) bwUnit.textContent = settings?.unit || 'kg';
+      renderSummary();
+      document.getElementById('summary-screen').style.display='flex';
       return true;
     }
+    
+    // Normal active workout restore
+    const elapsed = Math.floor((Date.now()-workoutStartTime)/1000);
+    const mins = Math.floor(elapsed/60);
+    document.getElementById('workout-title').textContent=currentWorkout.splitType.toUpperCase()+' DAY';
+    document.getElementById('workout-screen').style.display='flex';
+    startTimer();
+    renderWorkoutExercises();
+    return true;
   }catch(e){console.error('Restore failed:',e);}
   localStorage.removeItem('ironlog_active_workout');
   return false;
@@ -1016,6 +1065,13 @@ async function renderToday(){
 }
 
 async function startWorkout(splitType){
+  // Guard: don't start if a workout is already in progress
+  if(currentWorkout && currentWorkout.status !== 'completed'){
+    if(!confirm('You already have an active workout. Start a new one?')) return;
+    clearInterval(workoutTimerInterval);
+    clearWorkoutStorage();
+    currentWorkout = null;
+  }
   const exercises = await dbGetAll('exercises');
   const sessions = await dbGetAll('sessions');
   const lastSame = sessions.filter(s=>s.splitType===splitType&&s.status==='completed').sort((a,b)=>a.date>b.date?-1:1)[0];
@@ -1464,6 +1520,8 @@ async function completeWorkout(){
   if(bwUnit) bwUnit.textContent = settings?.unit || 'kg';
   renderSummary();
   document.getElementById('summary-screen').style.display='flex';
+  // Save state so summary screen survives app kill
+  saveWorkoutToStorage();
 }
 
 async function renderSummary(){
@@ -2375,8 +2433,16 @@ async function init(){
 // Save workout when app goes to background
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden&&currentWorkout){
-    saveWorkoutToStorage();
+    flushAndSaveWorkout();
   }
+});
+
+// Save workout before the page is unloaded (browser closed, tab closed, killed from recents)
+window.addEventListener('pagehide',()=>{
+  if(currentWorkout) flushAndSaveWorkout();
+});
+window.addEventListener('beforeunload',()=>{
+  if(currentWorkout) flushAndSaveWorkout();
 });
 
 if('serviceWorker' in navigator && location.protocol !== 'file:'){
