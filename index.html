@@ -1263,12 +1263,16 @@ function initPicker(id, vals, initVal, onChange){
   // Use parseFloat comparison to handle string/number mismatches from localStorage restore
   let idx = vals.findIndex(v=>parseFloat(v)===parseFloat(initVal));
   if(idx<0) idx=0;
-  let isInitializing = true;
+  const targetScrollTop = idx * 38;
+  // Guard: only allow onChange once the picker has settled at its intended position.
+  // Time-based guards (setTimeout 200ms) fail on slow mobile renders — the snap scroll
+  // can fire its scroll event AFTER the timer expires, calling onChange(vals[0]) and
+  // corrupting the restored weight. Instead, we track whether the last settled position
+  // matches the init target; if it does, the next scroll is the first real user scroll.
+  let initialised = false;
   requestAnimationFrame(()=>{
-    list.scrollTop = idx*38;
+    list.scrollTop = targetScrollTop;
     updatePickerSelected(list,idx);
-    // Mark initialization complete after scroll settles
-    setTimeout(()=>{ isInitializing=false; }, 200);
   });
   let scrollTimeout;
   list.addEventListener('scroll',()=>{
@@ -1280,11 +1284,19 @@ function initPicker(id, vals, initVal, onChange){
         list.scrollTo({top:clampedIdx*38,behavior:'smooth'});
       }
       updatePickerSelected(list,clampedIdx);
-      // Only fire onChange for real user interactions, not initialization snapping
-      if(!isInitializing){
-        onChange(vals[clampedIdx]);
-        debouncedSaveWorkout();
+      if(!initialised){
+        // If we've landed on the correct initial position, mark ready.
+        // If we've somehow snapped elsewhere (edge case), correct the data silently.
+        if(clampedIdx === idx){
+          initialised = true;
+        } else {
+          // Snapped to wrong position during init — force back without firing onChange
+          requestAnimationFrame(()=>{ list.scrollTop = targetScrollTop; updatePickerSelected(list,idx); });
+        }
+        return;
       }
+      onChange(vals[clampedIdx]);
+      debouncedSaveWorkout();
     },80);
   });
 }
