@@ -1,5 +1,5 @@
 // Service Worker for Iron Log PWA
-const CACHE_NAME = 'ironlog-v2';
+const CACHE_NAME = 'ironlog-v3';
 const urlsToCache = [
   './',
   './index.html',
